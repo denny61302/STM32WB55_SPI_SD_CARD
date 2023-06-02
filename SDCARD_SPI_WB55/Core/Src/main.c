@@ -91,9 +91,10 @@ Ring_Buffer_t hRingBuff =
       .availableSamples = 0
   };
 
+uint32_t RingBufferErrorCode;
+
 FRESULT res; /* FatFs function common result code */
 UINT byteswritten; /* File write/read counts */
-const char header[] = "adc_value\n";  /* CSV Column Labels */
 char str_buf[16];
 uint8_t workBuffer[_MAX_SS];
 FIL ADC_data_file;
@@ -188,94 +189,28 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // Link SD drivers to file system
-	res = InitFileSystem();
+  res = InitFileSystem();
 
-	if (res != FR_OK)
-	{
-		myprintf("f_mount error (%i)\r\n", res);
-	}
+  if (res != FR_OK)
+  {
+	  myprintf("f_mount error (%i)\r\n", res);
+	  Error_Handler();
+  }
   HAL_Delay(500);
   // Set the sampling frequency of the ADC by setting timer frequency
   SetSamplingFrequency(SAMP_FREQ);
 
   // Allocate the memory for the ring buffer
-  RingBuffer_alloc(&hRingBuff);
+  RingBufferErrorCode = RingBuffer_alloc(&hRingBuff);
+
+  if ( RingBufferErrorCode != RB_ERR_OK )
+  {
+	  Error_Handler();
+  }
+
   HAL_TIM_Base_Start(&htim2);
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buf, DMA_BUFF_LENGTH);
-  /*
 
-
-  fres = f_mount(&FatFs, "", 1); //1=mount now
-  if (fres != FR_OK) {
-	myprintf("f_mount error (%i)\r\n", fres);
-	while(1);
-  }
-
-  //Let's get some statistics from the SD card
-  DWORD free_clusters, free_sectors, total_sectors;
-
-  FATFS* getFreeFs;
-
-  fres = f_getfree("", &free_clusters, &getFreeFs);
-  if (fres != FR_OK) {
-    myprintf("f_getfree error (%i)\r\n", fres);
-	while(1);
-  }
-  //Formula comes from ChaN's documentation
-  total_sectors = (getFreeFs->n_fatent - 2) * getFreeFs->csize;
-  free_sectors = free_clusters * getFreeFs->csize;
-
-  myprintf("SD card stats:\r\n%10lu KiB total drive space.\r\n%10lu KiB available.\r\n", total_sectors / 2, free_sectors / 2);
-
-
-  //Now let's try to open file "test.txt"
-  fres = f_open(&fil, "test.txt", FA_READ);
-  if (fres != FR_OK) {
-	myprintf("f_open error (%i)\r\n");
-	while(1);
-  }
-  myprintf("I was able to open 'test.txt' for reading!\r\n");
-  HAL_Delay(1000);
-  //Read 30 bytes from "test.txt" on the SD card
-  BYTE readBuf[30];
-
-  //We can either use f_read OR f_gets to get data out of files
-  //f_gets is a wrapper on f_read that does some string formatting for us
-  TCHAR* rres = f_gets((TCHAR*)readBuf, 30, &fil);
-  if(rres != 0) {
-	myprintf("Read string from 'test.txt' contents: %s\r\n", readBuf);
-  } else {
-	myprintf("f_gets error (%i)\r\n", fres);
-  }
-
-  //Be a tidy kiwi - don't forget to close your file!
-  f_close(&fil);
-
-  //Now let's try and write a file "write.txt"
-  fres = f_open(&fil, "write.txt", FA_WRITE | FA_OPEN_ALWAYS | FA_CREATE_ALWAYS);
-  if(fres == FR_OK) {
-	myprintf("I was able to open 'write.txt' for writing\r\n");
-  } else {
-	myprintf("f_open error (%i)\r\n", fres);
-  }
-
-  //Copy in a string
-  strncpy((char*)readBuf, "a new file is made!", 19);
-  UINT bytesWrote;
-  fres = f_write(&fil, readBuf, 19, &bytesWrote);
-  if(fres == FR_OK) {
-	myprintf("Wrote %i bytes to 'write.txt'!\r\n", bytesWrote);
-  } else {
-	myprintf("f_write error (%i)\r\n");
-  }
-
-  //Be a tidy kiwi - don't forget to close your file!
-  f_close(&fil);
-
-  //We're done, so de-mount the drive
-  f_mount(NULL, "", 0);
-
-  */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -288,6 +223,8 @@ int main(void)
       {
         file_num++;
 
+        // green LED indicates that file writing process is ongoing
+        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
 
         str_len = sprintf(str_buf, "ADCVals%d.csv", file_num);
 
@@ -303,12 +240,6 @@ int main(void)
 
         if( res == FR_OK)
         {
-          res = f_write(&ADC_data_file, header, sizeof(header), &byteswritten);
-          if (res != FR_OK)
-          {
-            Error_Handler();
-          }
-
 
           /* Write ADC data into file until the button is pressed again */
           while ( write_adc_data )
@@ -380,7 +311,8 @@ int main(void)
           f_close(&ADC_data_file);
         }
 
-
+        // Turn off green LED to indicate file isn't being written to any longer
+        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
       }
 
     /* USER CODE END WHILE */
@@ -515,7 +447,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_6CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
@@ -905,14 +837,63 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 }
 
+static void Handle_Overflow(void)
+{
+  // Stop writing ADC since internal ring buffer can't handle more data
+   write_adc_data = 0;
+
+  /* Reset all of the ring buffer state variables
+   * in prep for restarting ADC reading
+   */
+  hRingBuff.readIdx = 0;
+  hRingBuff.writeIdx = 0;
+  hRingBuff.availableSamples = 0;
+
+  // Blink a few times to indicate overflow.
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+  HAL_Delay(200);
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+  HAL_Delay(200);
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+  HAL_Delay(200);
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+  HAL_Delay(200);
+  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-	RingBuffer_feed(&hRingBuff, (uint8_t *)&adc_dma_buf[DMA_BUFF_LENGTH/2], DMA_BUFF_LENGTH/2);
+	 if (write_adc_data)
+	  {
+	    RingBufferErrorCode = RingBuffer_feed(&hRingBuff, (uint8_t *)&adc_dma_buf[DMA_BUFF_LENGTH/2], DMA_BUFF_LENGTH/2);
+	    if( RingBufferErrorCode != RB_ERR_OK )
+	    {
+	      if (RingBufferErrorCode == RB_ERR_OVERFLOW)
+	      {
+	        Handle_Overflow();
+	      }
+	    }
+	  }
 }
 void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
 {
-    RingBuffer_feed(&hRingBuff, (uint8_t *)&adc_dma_buf[0], DMA_BUFF_LENGTH/2);
+	if (write_adc_data)
+	  {
+	    RingBufferErrorCode = RingBuffer_feed(&hRingBuff, (uint8_t *)&adc_dma_buf[0], DMA_BUFF_LENGTH/2);
+	    if( RingBufferErrorCode != RB_ERR_OK )
+	    {
+	      if (RingBufferErrorCode == RB_ERR_OVERFLOW)
+	      {
+	        Handle_Overflow();
+	      }
+	    }
+	  }
+}
+
+void HAL_ADC_ErrorCallback(ADC_HandleTypeDef *hadc)
+{
+  Error_Handler();
 }
 /* USER CODE END 4 */
 
@@ -927,6 +908,7 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+	  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
   }
   /* USER CODE END Error_Handler_Debug */
 }
