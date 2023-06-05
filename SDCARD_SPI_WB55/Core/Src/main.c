@@ -95,7 +95,7 @@ uint32_t RingBufferErrorCode;
 
 FRESULT res; /* FatFs function common result code */
 UINT byteswritten; /* File write/read counts */
-char str_buf[16];
+char str_buf[256];
 uint8_t workBuffer[_MAX_SS];
 FIL ADC_data_file;
 
@@ -258,19 +258,19 @@ int main(void)
                 Error_Handler();
               }
 
-              for (uint32_t i = 0; i < DMA_BUFF_LENGTH/2; i++)
-              {
-                /*
-                 * Custom itoa implementation, only works for base 10 decimal less than 5 digits.
-                 */
-                ADCStrlength = fast5DigitDecToStr((int)ConsumeBuff[i], ADCValStr);
 
-                ADCValStr[ADCStrlength] = '\n';
+			  for (uint32_t i = 0; i < DMA_BUFF_LENGTH/2/4; i++)
+			  {
+//				myprintf("%d, %d, %d, %d, %d\r\n", i, (int)ConsumeBuff[i*4], (int)ConsumeBuff[i*4+1], (int)ConsumeBuff[i*4+2], (int)ConsumeBuff[i*4+3]);
+				str_len = sprintf(str_buf, "%d, %d, %d, %d\r\n", (int)ConsumeBuff[i*4], (int)ConsumeBuff[i*4+1], (int)ConsumeBuff[i*4+2], (int)ConsumeBuff[i*4+3]);
+//					ADCStrlength = fast5DigitDecToStr((int)ConsumeBuff[i], ADCValStr);
+//
+//					ADCValStr[ADCStrlength] = '\n';
+//
+				res = f_write(&ADC_data_file, str_buf, str_len, &byteswritten);
+//
+			  }
 
-                // Write longer than string end to include null terminator
-                res = f_write(&ADC_data_file, ADCValStr, (ADCStrlength + 1), &byteswritten);
-
-              }
             }
 
           }
@@ -294,17 +294,17 @@ int main(void)
                 Error_Handler();
               }
 
-              for (uint32_t i = 0; i < DMA_BUFF_LENGTH/2; i++)
-              {
-
-                ADCStrlength = fast5DigitDecToStr((int)ConsumeBuff[i], ADCValStr);
-
-                ADCValStr[ADCStrlength] = '\n';
-
-                res = f_write(&ADC_data_file, ADCValStr, (ADCStrlength + 1), &byteswritten);
-
-              }
-
+			  for (uint32_t i = 0; i < DMA_BUFF_LENGTH/2/4; i++)
+			  {
+//				myprintf("%d, %d, %d, %d, %d\r\n", i, (int)ConsumeBuff[i*4], (int)ConsumeBuff[i*4+1], (int)ConsumeBuff[i*4+2], (int)ConsumeBuff[i*4+3]);
+				str_len = sprintf(str_buf, "%d, %d, %d, %d\r\n", (int)ConsumeBuff[i*4], (int)ConsumeBuff[i*4+1], (int)ConsumeBuff[i*4+2], (int)ConsumeBuff[i*4+3]);
+//					ADCStrlength = fast5DigitDecToStr((int)ConsumeBuff[i], ADCValStr);
+//
+//					ADCValStr[ADCStrlength] = '\n';
+//
+				res = f_write(&ADC_data_file, str_buf, str_len, &byteswritten);
+//
+			  }
             }
           }
 
